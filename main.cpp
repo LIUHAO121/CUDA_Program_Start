@@ -7,6 +7,7 @@
 // 将所有的cu文件生成一个动态库
 // 先声明在cudafun.cu要使用的函数, 在开始link时,连接器会在动态库里找该函数的定义
 void add_run(float* x, float * y, float* z, int n); 
+void matrix_mul_run();
 
 int main()
 {   
@@ -55,6 +56,8 @@ int main()
     free(x);
     free(y);
     free(z);
+
+    matrix_mul_run();
 
     return 0;
 }
