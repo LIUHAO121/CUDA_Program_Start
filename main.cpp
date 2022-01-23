@@ -12,9 +12,10 @@ int main()
     int nBytes = N * sizeof(float);
     // 申请host内存
     float *x, *y, *z;
-    x = (float*)malloc(nBytes);
-    y = (float*)malloc(nBytes);
-    z = (float*)malloc(nBytes);
+    //统一内存使用一个托管内存来共同管理host和device中的内存，并且自动在host和device中进行数据传输。
+    cudaMallocManaged((void**)&x,nBytes);
+    cudaMallocManaged((void**)&y,nBytes);
+    cudaMallocManaged((void**)&z,nBytes);
 
     // 初始化数据
     for (int i = 0; i < N; ++i)
@@ -23,21 +24,9 @@ int main()
         y[i] = 20.0;
     }
 
-    // 申请device内存
-    float *d_x, *d_y, *d_z;
-    cudaMalloc((void**)&d_x, nBytes);
-    cudaMalloc((void**)&d_y, nBytes);
-    cudaMalloc((void**)&d_z, nBytes);
+    add_run(x,y,z,N);
 
-    // 将host数据拷贝到device
-    cudaMemcpy((void*)d_x, (void*)x, nBytes, cudaMemcpyHostToDevice);
-    cudaMemcpy((void*)d_y, (void*)y, nBytes, cudaMemcpyHostToDevice);
-    
-    add_run(d_x,d_y,d_z,N);
-
-    // 将device得到的结果拷贝到host
-    cudaMemcpy((void*)z, (void*)d_z, nBytes, cudaMemcpyDeviceToHost);
-
+    cudaDeviceSynchronize();
     // 检查执行结果
     float maxError = 0.0;
     for (int i = 0; i < N; i++)
@@ -45,13 +34,10 @@ int main()
     std::cout << "最大误差: " << maxError << std::endl;
 
     // 释放device内存
-    cudaFree(d_x);
-    cudaFree(d_y);
-    cudaFree(d_z);
-    // 释放host内存
-    free(x);
-    free(y);
-    free(z);
+    cudaFree(x);
+    cudaFree(y);
+    cudaFree(z);
+ 
 
     matrix_mul_run();
     gpu_add_run();
