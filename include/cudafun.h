@@ -4,3 +4,5 @@
 void add_run(float* x, float * y, float* z, int n); 
 void matrix_mul_run();
 void gpu_add_run();
+void vec_add_run();
+void vec_add_stream_run();

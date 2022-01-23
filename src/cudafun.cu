@@ -6,6 +6,9 @@
 
 #define CHECK(x) check_runtime(x)
 
+// 不要在cpp文件中include以 .cu 文件，因为遇到<<< >>> 这样的符号容易编译不过
+// 一般将所有的 .cu 生成动态库，然后再连接该库
+
 // CUDA 不会自动报错，需要check
 void check_runtime(cudaError_t e){
         if (e != cudaSuccess) {
@@ -77,6 +80,7 @@ void gpu_add_invoke(int* input,int count,int* res)
 
 void gpu_add_run()
 {
+    std::cout << "-------------- gpu_add_run -------------" << std::endl;
     int count = 100;
     int* h_input;
     int* h_output;
@@ -86,7 +90,7 @@ void gpu_add_run()
     {
         h_input[i] = i+1;
     }
-
+    
     int* d_input;
     int* d_output;
     cudaMalloc((void**)&d_input,sizeof(int)*count);
@@ -130,6 +134,7 @@ void matrix_mul_invoker(int* m,int* n,int m_size,int n_size,int k_size,int* res)
 
 void matrix_mul_run()
 {
+    std::cout << "-------------- matrix_mul_run -------------" << std::endl;
     int m_size = 100;
     int n_size = 100;
     int k_size = 100;
@@ -138,9 +143,10 @@ void matrix_mul_run()
     int* h_a;
     int* h_b;
     int* h_c;
-    CHECK(cudaMallocHost((void**)&h_a, sizeof(int)*m_size*n_size));
-    CHECK(cudaMallocHost((void**)&h_b, sizeof(int)*n_size*k_size));
-    CHECK(cudaMallocHost((void**)&h_c, sizeof(int)*m_size*k_size));
+    
+    h_a = (int*)malloc(sizeof(int)*m_size*n_size);
+    h_b = (int*)malloc(sizeof(int)*n_size*k_size);
+    h_c = (int*)malloc(sizeof(int)*m_size*k_size);
 
     for (int i =0 ; i< m_size; i++)
     {
@@ -171,6 +177,7 @@ void matrix_mul_run()
     cudaMemcpy(d_b,h_b,sizeof(int)*n_size*k_size,cudaMemcpyHostToDevice);
 
     matrix_mul_invoker(d_a,d_b,m_size,n_size,k_size,d_c);
+    cudaDeviceSynchronize();
     cudaMemcpy(h_c,d_c,sizeof(int)*m_size*k_size,cudaMemcpyDeviceToHost);
 
     for(int i=0;i<3;i++)
@@ -179,11 +186,17 @@ void matrix_mul_run()
         std::cout << h_c[i] << std::endl;
     }
 
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+    free(h_a); // 不能释放由cudaMallocHost分配的内存
+    free(h_b);  
+    free(h_c);
 }
 
 
 
-static __global__ void add(float* x, float * y, float* z, int n)
+static __global__ void vec_add(float* x, float * y, float* z, int n)
 {
     // 获取全局索引
     int index = threadIdx.x + blockIdx.x * blockDim.x;
@@ -195,12 +208,104 @@ static __global__ void add(float* x, float * y, float* z, int n)
     }
 }
 
-// 不要在cpp文件中include以 .cu 文件，因为遇到<<< >>> 这样的符号容易编译不过
-// 一般将所有的 .cu 生成动态库，然后再连接该库
-
-void add_run(float* x, float * y, float* z, int n)
+template <typename T>
+void vec_add_invoke(T* x, T* y, T* z, int n)
 {
-    dim3 blockSize(256);
+    dim3 blockSize(32);
     dim3 gridSize((n + blockSize.x - 1) / blockSize.x);
-    add<<<gridSize, blockSize>>>(x, y, z, n);
+    vec_add<<<gridSize, blockSize>>>(x, y, z, n);
+}
+
+void vec_add_run()
+{
+    std::cout << "-------------- vec_add_run -------------" << std::endl;
+    int N = 1 << 20;
+    int nBytes = N * sizeof(float);
+    // 申请host内存
+    float *x, *y, *z;
+    //统一内存使用一个托管内存来共同管理host和device中的内存，并且自动在host和device中进行数据传输。
+    cudaMallocManaged((void**)&x,nBytes);
+    cudaMallocManaged((void**)&y,nBytes);
+    cudaMallocManaged((void**)&z,nBytes);
+
+    // 初始化数据
+    for (int i = 0; i < N; ++i)
+    {
+        x[i] = 10.0;
+        y[i] = 20.0;
+    }
+
+    vec_add_invoke(x,y,z,N);
+
+    //等待gpu执行结束,
+    //kernel执行是与host异步的，由于托管内存自动进行数据传输，这里要用cudaDeviceSynchronize()函数保证device和host同步，这样后面才可以正确访问kernel计算的结果。
+    cudaDeviceSynchronize();
+    // 检查执行结果
+    float maxError = 0.0;
+    for (int i = 0; i < N; i++)
+        maxError = z[i] - 30.0;
+    std::cout << "最大误差: " << maxError << std::endl;
+
+    // 释放device内存
+    cudaFree(x);
+    cudaFree(y);
+    cudaFree(z);
+}
+
+
+void vec_add_stream_invoke(float* x, float * y, float* z, int n,cudaStream_t stream)
+{
+    dim3 blockSize(32);
+    dim3 gridSize((n + blockSize.x - 1) / blockSize.x);
+    vec_add<<<gridSize, blockSize,0,stream>>>(x, y, z, n);
+}
+
+void vec_add_stream_run()
+{
+    std::cout << "-------------- vec_add_stream_run -------------" << std::endl;
+    std::cout << "-------------- 使用cuda流来加速应用程序 -------------" << std::endl;
+    int n=1024;
+    int nBytes = n * sizeof(float);
+    // 申请host内存
+    float *h_x, *h_y, *h_z;
+    cudaMallocHost((void**)&h_x,nBytes);
+    cudaMallocHost((void**)&h_y,nBytes);
+    cudaMallocHost((void**)&h_z,nBytes);
+
+    for (int i = 0; i < n;i++)
+    {
+        h_x[i] = 10.0;
+        h_y[i] = 20.0;
+    }
+
+    float *d_x, *d_y, *d_z;
+    cudaMalloc((void**)&d_x,nBytes);
+    cudaMalloc((void**)&d_y,nBytes);
+    cudaMalloc((void**)&d_z,nBytes);
+    int nstream = 2;
+    cudaStream_t streams[nstream];
+    for (int i = 0;i<nstream;i++)
+    {
+        cudaStreamCreate(&streams[i]);
+    }
+    int eles_per_stream = n/nstream;
+    for (int i=0;i<nstream;i++)
+    {
+        int offset = i * eles_per_stream;
+        cudaMemcpyAsync(&d_x[offset], &h_x[offset], eles_per_stream*sizeof(float), cudaMemcpyHostToDevice, streams[i]);
+        cudaMemcpyAsync(&d_y[offset], &h_y[offset], eles_per_stream*sizeof(float), cudaMemcpyHostToDevice, streams[i]);
+        vec_add_stream_invoke(&d_x[offset], &d_y[offset], &d_z[offset], eles_per_stream,streams[i]);
+        cudaMemcpyAsync(&h_z[offset], &d_z[offset], eles_per_stream*sizeof(float),cudaMemcpyDeviceToHost,streams[i]);
+    }
+    for (int i=0;i<nstream;i++)
+    {
+        cudaStreamSynchronize(streams[i]);
+    }
+
+    for (int i=0;i<nstream;i++)
+    {
+        std::cout << "stream res at position "<< i*eles_per_stream << " = " <<h_z[i*eles_per_stream] << std::endl;
+    }
+    
+
 }
