@@ -9,11 +9,13 @@ set(CUDA_DIR  "/usr/local/cuda/")
 include_directories(${CUDA_DIR}/include)
 link_directories(${CUDA_DIR}/lib64)
 
+# 加入本项目的头文件
+include_directories(${PROJECT_SOURCE_DIR}/include)
 
-file(GLOB cuda_srcs ${PROJECT_SOURCE_DIR}/*.cu)
+file(GLOB cuda_srcs ${PROJECT_SOURCE_DIR}/src/*.cu)
 add_library(plugin_list SHARED ${cuda_srcs})
-file(GLOB cpp_srcs ${PROJECT_SOURCE_DIR}/*.cpp)
 
+file(GLOB cpp_srcs ${PROJECT_SOURCE_DIR}/*.cpp)
 add_executable(main ${cpp_srcs})
 
 target_link_libraries(main cuda cublas cudart cudnn)
