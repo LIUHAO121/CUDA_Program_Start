@@ -3,7 +3,7 @@
 #include "cudafun.h"
 
 #define BLOCK_SIZE  32
-
+#define TILE_SIZE 16
 #define CHECK(x) check_runtime(x)
 
 // 不要在cpp文件中include以 .cu 文件，因为遇到<<< >>> 这样的符号容易编译不过
@@ -136,8 +136,8 @@ void matrix_mul_run()
 {
     std::cout << "-------------- matrix_mul_run -------------" << std::endl;
     int m_size = 100;
-    int n_size = 100;
-    int k_size = 100;
+    int n_size = 150;
+    int k_size = 1000;
     // m shape = (m_size,n_size)
     // n shape = (n_size,k_size)
     int* h_a;
@@ -180,11 +180,8 @@ void matrix_mul_run()
     cudaDeviceSynchronize();
     cudaMemcpy(h_c,d_c,sizeof(int)*m_size*k_size,cudaMemcpyDeviceToHost);
 
-    for(int i=0;i<3;i++)
-    {
-        std::cout << "matrix mul res" << std::endl;
-        std::cout << h_c[i] << std::endl;
-    }
+    std::cout << "h_out first element " << h_c[0] << std::endl;
+    std::cout << "h_out last element " << h_c[m_size * k_size - 1] << std::endl;
 
     cudaFree(d_a);
     cudaFree(d_b);
@@ -194,6 +191,122 @@ void matrix_mul_run()
     free(h_c);
 }
 
+
+
+
+// 通过share memory 进行矩阵乘法
+static __global__ void share_matrix_mul(float* M,float* N, int height,int k, int width, float* res)
+{
+    // matrix M (h * k)
+    // matrix N (k * w)
+    __shared__ float sm[TILE_SIZE][TILE_SIZE];
+    __shared__ float sn[TILE_SIZE][TILE_SIZE];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    // blockDim.y = blockDim.x = TILE_SIZE
+    int row = by * TILE_SIZE + ty;
+    int col = bx * TILE_SIZE + tx;
+
+    float pvalue = 0;
+
+    for (int i = 0;i < (k + TILE_SIZE - 1)/TILE_SIZE;i++)
+    {
+        if (row < height && i * TILE_SIZE + tx < k)
+            sm[ty][tx] = M[row * k + i * TILE_SIZE + tx];
+        else
+            sm[ty][tx] = 0;
+        if (col < width && i * TILE_SIZE + ty < k)
+            sn[ty][tx] = N[(i * TILE_SIZE + ty) * width + col];
+        else
+            sn[ty][tx] = 0;
+        __syncthreads();
+
+        for(int j=0;j<TILE_SIZE;j++)
+        {
+            pvalue += sm[ty][j] * sn[j][tx];
+        }
+        __syncthreads();
+
+    }
+    if (row < height && col < width)
+        res[row * width + col] = pvalue;
+}
+
+void share_matrix_invoke(float* M,float* N, int height,int k, int width, float* res)
+{
+    unsigned int grid_rows = (height + TILE_SIZE - 1) / TILE_SIZE;
+    unsigned int grid_cols = (width + TILE_SIZE - 1) / TILE_SIZE;
+    dim3 dimBlock(TILE_SIZE,TILE_SIZE);
+    dim3 dimGrid{grid_cols,grid_rows};
+    share_matrix_mul<<<dimGrid,dimBlock>>>(M,N,height,k,width,res);
+}
+
+void share_matrix_mul_run()
+{
+    std::cout << "-------------- share_matrix_mul_run -------------" << std::endl;
+    int m_size = 15;
+    int k_size = 101;
+    int n_size = 15;
+
+    // h_m shape = (m_size,k_size)
+    // h_n shape = (k_size,n_size)
+
+    float* h_m;
+    float* h_n;
+    float* h_out;
+    
+    h_m = (float*)malloc(sizeof(float) * m_size * k_size);
+    h_n = (float*)malloc(sizeof(float) * k_size * n_size);
+    h_out = (float*)malloc(sizeof(float) * m_size * n_size);
+
+    for (int i =0 ; i< m_size; i++)
+    {
+        for (int j=0; j< k_size;j++)
+        {
+            h_m[i*k_size + j] = 2;
+        }
+    }
+
+    for (int i =0 ; i < k_size; i++)
+    {
+        for (int j=0; j < n_size;j++)
+        {
+            h_n[i * n_size + j] = 3;
+        }
+    }
+
+    float* d_m;
+    float* d_n;
+    float* d_out;
+    cudaMalloc((void**)&d_m,sizeof(float)*m_size*k_size);
+    cudaMalloc((void**)&d_n,sizeof(float)*k_size*n_size);
+    cudaMalloc((void**)&d_out,sizeof(float)*m_size*n_size);
+
+    cudaMemcpy(d_m,h_m,sizeof(float)*m_size*k_size,cudaMemcpyHostToDevice);
+    cudaMemcpy(d_n,h_n,sizeof(float)*k_size*n_size,cudaMemcpyHostToDevice);
+
+    share_matrix_invoke(d_m,d_n,m_size,k_size,n_size,d_out);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_out,d_out,sizeof(int)*m_size*n_size,cudaMemcpyDeviceToHost);
+    
+    std::cout << "h_out first element " << h_out[0] << std::endl;
+    std::cout << "h_out second element " << h_out[1] << std::endl;
+    std::cout << "h_out n_size-1 element " << h_out[2*n_size-1] << std::endl;
+    std::cout << "h_out n_size element " << h_out[2*n_size] << std::endl;
+    std::cout << "h_out n_size+1 element " << h_out[2*n_size + 1] << std::endl;
+    std::cout << "h_out last element " << h_out[m_size * n_size - 1] << std::endl;
+
+    // cudaFree(d_m);
+    // cudaFree(d_n);
+    // cudaFree(d_out);
+    // free(h_m); // 不能释放由cudaMallocHost分配的内存
+    // free(h_n);  
+    // free(h_out);
+}
 
 
 static __global__ void vec_add(float* x, float * y, float* z, int n)

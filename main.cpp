@@ -13,5 +13,6 @@ int main()
     matrix_mul_run();
     gpu_add_run();
     vec_add_stream_run();
+    share_matrix_mul_run();
     return 0;
 }

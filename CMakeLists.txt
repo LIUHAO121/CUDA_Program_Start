@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION  3.9 FATAL_ERROR)
 project(main CXX CUDA)
 
 set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_CUDA_FLAGS "-g -G -O3 -Wno-deprecated-gpu-targets")
+set(CMAKE_CUDA_FLAGS "-g -G -O0 -Wno-deprecated-gpu-targets")
 
 
 set(CUDA_DIR  "/usr/local/cuda/")

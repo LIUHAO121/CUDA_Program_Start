@@ -6,3 +6,4 @@ void matrix_mul_run();
 void gpu_add_run();
 void vec_add_run();
 void vec_add_stream_run();
+void share_matrix_mul_run();
